@@ -7,36 +7,37 @@ from data_processing import process_data
 # 1. Configuração da Página
 st.set_page_config(page_title="Dashboard E-commerce - Desafio DIO", layout="wide")
 
-# Estilização CSS personalizada
-st.markdown("""
-    <style>
-    .main {
-        background-color: #f5f7f9;
-    }
-    .stMetric {
-        background-color: #ffffff;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-# 2. Carregamento e Processamento de Dados
+# 2. Função para carregar os dados (Busca flexível)
 @st.cache_data
 def load_and_setup_data():
-    # O nome do arquivo conforme carregado no ambiente
-    target_file = "Financial Sample.xlsx - Sheet1.csv"
+    # Lista de possíveis nomes de arquivo que você pode estar usando
+    possible_files = [
+        "Financial Sample.xlsx - Sheet1.csv", 
+        "Financial Sample.csv",
+        "Financial Sample.xlsx"
+    ]
     
-    if not os.path.exists(target_file):
-        st.error(f"Arquivo {target_file} não encontrado!")
+    file_path = None
+    for f in possible_files:
+        if os.path.exists(f):
+            file_path = f
+            break
+    
+    if file_path is None:
+        st.error("❌ Arquivo de dados não encontrado! Verifique se o arquivo está na mesma pasta que este script.")
         return None
 
     try:
-        # Lendo o CSV (ajustado para o arquivo fornecido)
-        df = pd.read_csv(target_file)
+        # Verifica se é CSV ou Excel e lê corretamente
+        if file_path.endswith('.csv'):
+            df = pd.read_csv(file_path)
+        else:
+            df = pd.read_excel(file_path, engine='openpyxl')
         
-        # Aplicando o processamento do arquivo data_processing.py
+        # Limpeza básica de nomes de colunas (remove espaços extras)
+        df.columns = df.columns.str.strip()
+        
+        # Aplicando o seu processamento do data_processing.py
         df = process_data(df)
         
         # Garantir que a coluna Date seja datetime
@@ -47,23 +48,21 @@ def load_and_setup_data():
         st.error(f"Erro ao processar dados: {e}")
         return None
 
+# Execução do carregamento
 df = load_and_setup_data()
 
 if df is not None:
     # 3. Sidebar - Filtros
     st.sidebar.header("🔍 Filtros")
     
-    # Filtro de País
     countries = sorted(df['Country'].unique())
     country_filter = st.sidebar.multiselect("Selecione o País:", options=countries, default=countries)
     
-    # Filtro de Produto
     products = sorted(df['Product'].unique())
     product_filter = st.sidebar.multiselect("Selecione o Produto:", options=products, default=products)
 
     # Aplicando Filtros
-    mask = df['Country'].isin(country_filter) & df['Product'].isin(product_filter)
-    df_filtered = df[mask]
+    df_filtered = df[df['Country'].isin(country_filter) & df['Product'].isin(product_filter)]
 
     # 4. Cabeçalho Principal
     st.title("📊 Dashboard de Vendas E-commerce")
@@ -72,42 +71,28 @@ if df is not None:
     # 5. KPIs
     col1, col2, col3, col4 = st.columns(4)
     
-    total_sales = df_filtered['Sales'].sum()
-    total_profit = df_filtered['Profit'].sum()
-    total_units = df_filtered['Units Sold'].sum()
-    avg_discount = df_filtered['Discounts'].mean()
-
     with col1:
-        st.metric("Vendas Totais", f"$ {total_sales:,.2f}")
+        st.metric("Vendas Totais", f"$ {df_filtered['Sales'].sum():,.2f}")
     with col2:
-        st.metric("Lucro Total", f"$ {total_profit:,.2f}")
+        st.metric("Lucro Total", f"$ {df_filtered['Profit'].sum():,.2f}")
     with col3:
-        st.metric("Unidades Vendidas", f"{total_units:,.0f}")
+        st.metric("Unidades Vendidas", f"{df_filtered['Units Sold'].sum():,.0f}")
     with col4:
-        st.metric("Desconto Médio", f"$ {avg_discount:,.2f}")
+        # Coluna ' Sales' (com espaço) ou 'Sales' dependendo do CSV
+        sales_col = ' Sales' if ' Sales' in df_filtered.columns else 'Sales'
+        st.metric("Ticket Médio", f"$ {df_filtered[sales_col].mean():,.2f}")
 
-    st.markdown("### Análises Detalhadas")
+    # 6. Gráficos
+    c1, c2 = st.columns(2)
     
-    row2_col1, row2_col2 = st.columns(2)
-
-    # 6. Gráfico de Evolução Temporal
-    with row2_col1:
-        df_temp = df_filtered.groupby('Date')['Sales'].sum().reset_index()
-        fig_date = px.line(df_temp, x='Date', y='Sales', title='Evolução de Vendas no Tempo',
-                          line_shape='spline', render_mode='svg')
+    with c1:
+        df_temp = df_filtered.groupby('Date')[['Sales']].sum().reset_index()
+        fig_date = px.line(df_temp, x='Date', y='Sales', title='Tendência de Vendas')
         st.plotly_chart(fig_date, use_container_width=True)
 
-    # 7. Gráfico de Vendas por Produto
-    with row2_col2:
-        df_prod = df_filtered.groupby('Product')['Sales'].sum().sort_values(ascending=True).reset_index()
-        fig_prod = px.bar(df_prod, x='Sales', y='Product', orientation='h',
-                         title='Vendas por Produto', color='Sales',
-                         color_continuous_scale='Blues')
+    with c2:
+        fig_prod = px.pie(df_filtered, values='Sales', names='Product', title='Distribuição por Produto')
         st.plotly_chart(fig_prod, use_container_width=True)
 
-    # 8. Visão de Tabela de Dados (Opcional)
-    with st.expander("Ver dados brutos filtrados"):
-        st.dataframe(df_filtered)
-
-else:
-    st.info("Aguardando carregamento dos dados...")
+    # 7. Tabela
+    st.dataframe(df_filtered.head(10), use_container_width=True)
